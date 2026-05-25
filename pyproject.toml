@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vjepa-latent-dynamics"
+version = "0.1.0"
+description = "Phase 1 V-JEPA latent video embedding extraction prototype"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.3.0",
+  "torchvision>=0.18.0",
+  "transformers>=4.53.0",
+  "numpy>=1.26.0",
+  "pyyaml>=6.0.1",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "python-multipart>=0.0.9",
+  "decord>=0.6.0",
+  "pydantic>=2.7.0",
+  "safetensors>=0.4.3"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

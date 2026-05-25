@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+data/sample_videos/uploads/
+outputs/embeddings/*
+outputs/metadata/*
+!outputs/embeddings/.gitkeep
+!outputs/metadata/.gitkeep

@@ -1,0 +1,30 @@
+paths:
+  sample_videos_dir: data/sample_videos
+  uploads_dir: data/sample_videos/uploads
+  embeddings_dir: outputs/embeddings
+  metadata_dir: outputs/metadata
+model:
+  backend: transformers
+  name: facebook/vjepa2-vitl-fpc64-256
+  device: auto
+  precision: fp32
+  torchhub_repo: facebookresearch/vjepa2
+  torchhub_name: vjepa2_vit_large
+  torchhub_pretrained: true
+  torchhub_trust_repo: true
+video:
+  clip_frames: 64
+  frame_stride: 1
+  clip_stride_seconds: 2.0
+  max_clips: 8
+  image_size: 256
+  mean:
+    - 0.485
+    - 0.456
+    - 0.406
+  std:
+    - 0.229
+    - 0.224
+    - 0.225
+storage:
+  format: pt

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>V-JEPA Latent Dynamics</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <div class="header">
+          <div>
+            <p class="eyebrow">Phase 1</p>
+            <h1>V-JEPA Embedding Extractor</h1>
+          </div>
+          <div class="badge" id="statusBadge">idle</div>
+        </div>
+        <div class="grid">
+          <section class="panel">
+            <h2>Video</h2>
+            <label class="field">
+              <span>Upload</span>
+              <input id="fileInput" type="file" accept="video/*">
+            </label>
+            <label class="field">
+              <span>Sample video</span>
+              <select id="videoSelect">
+                <option value="">Loading videos...</option>
+              </select>
+            </label>
+            <button id="extractButton" type="button">Start extraction</button>
+          </section>
+          <section class="panel">
+            <h2>Status</h2>
+            <div class="progress">
+              <div id="progressBar"></div>
+            </div>
+            <p id="statusText">Waiting for a video.</p>
+            <dl class="paths">
+              <dt>Embedding</dt>
+              <dd id="embeddingPath">-</dd>
+              <dt>Metadata</dt>
+              <dd id="metadataPath">-</dd>
+            </dl>
+          </section>
+        </div>
+        <section class="metadata">
+          <div class="metadataHeader">
+            <h2>Metadata</h2>
+            <div id="shapeText">shape: -</div>
+          </div>
+          <pre id="metadataOutput">{}</pre>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
