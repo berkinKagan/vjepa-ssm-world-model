@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 .env
 .pytest_cache/
@@ -8,5 +9,11 @@ __pycache__/
 data/sample_videos/uploads/
 outputs/embeddings/*
 outputs/metadata/*
+outputs/checkpoints/*
+outputs/predictions/*
+outputs/benchmarks/*
 !outputs/embeddings/.gitkeep
 !outputs/metadata/.gitkeep
+!outputs/checkpoints/.gitkeep
+!outputs/predictions/.gitkeep
+!outputs/benchmarks/.gitkeep

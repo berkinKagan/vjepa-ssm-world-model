@@ -22,5 +22,10 @@ dependencies = [
   "safetensors>=0.4.3"
 ]
 
+[project.optional-dependencies]
+mamba = [
+  "mamba-ssm>=2.2.0"
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
