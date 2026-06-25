@@ -8,8 +8,8 @@ def rerank_results(config: dict, query: str, results: list) -> list:
     model = client.choose_text_model(config.get("ollama_text_model"))
     if not model:
         return results
-    payload = [{"candidate_id": result.scene_id, "caption": result.caption, "start_time": result.start_time, "end_time": result.end_time} for result in results]
-    prompt = f"Given a user query and candidate scene captions, rank the candidates by relevance. Return only a JSON list of objects with candidate_id and relevance_score from most relevant to least relevant.\nUser query: {query}\nCandidates:\n{json.dumps(payload)}"
+    payload = [{"candidate_id": result.scene_id, "summary": result.searchable_summary or result.caption, "start_time": result.start_time, "end_time": result.end_time} for result in results]
+    prompt = f"Given a user query and candidate video segment summaries, rank the candidates by relevance. Use only the candidate summaries and timestamps. Return JSON with candidate ids ordered from most relevant to least relevant and short relevance scores. Do not invent new scenes.\nUser query: {query}\nCandidates:\n{json.dumps(payload)}"
     try:
         response = client.generate(model, prompt)
         order = parse_rerank_response(response)
@@ -21,8 +21,9 @@ def rerank_results(config: dict, query: str, results: list) -> list:
             if original:
                 original.original_rank = original.rank
                 original.original_score = original.score
-                if isinstance(item, dict) and "relevance_score" in item:
-                    original.score = float(item["relevance_score"])
+                score = rerank_score(item)
+                if score is not None:
+                    original.rerank_score = score
                 reranked.append(original)
         remaining = [result for result in results if result not in reranked]
         combined = reranked + remaining
@@ -41,4 +42,23 @@ def parse_rerank_response(response: str):
         if lines and lines[0].lower().startswith("json"):
             lines = lines[1:]
         text = "\n".join(lines).strip()
-    return json.loads(text)
+    value = json.loads(text)
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in ["ranking", "ranked_candidates", "results", "ordered_candidates", "candidate_ids", "ordered_candidate_ids"]:
+            if isinstance(value.get(key), list):
+                return value[key]
+    return []
+
+
+def rerank_score(item) -> float | None:
+    if not isinstance(item, dict):
+        return None
+    for key in ["relevance_score", "score", "relevance"]:
+        if key in item:
+            try:
+                return float(item[key])
+            except Exception:
+                return None
+    return None

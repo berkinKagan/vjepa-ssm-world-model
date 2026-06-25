@@ -1,7 +1,7 @@
 import base64
 import json
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from scene_search.schemas import OllamaModelInfo
@@ -70,8 +70,12 @@ class OllamaClient:
     def post_json(self, path: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
         request = Request(f"{self.base_url}{path}", data=data, method="POST", headers={"Content-Type": "application/json"})
-        with urlopen(request, timeout=120) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Ollama HTTP {exc.code}: {body}") from exc
 
 
 def is_vision_model_name(name: str) -> bool:

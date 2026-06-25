@@ -71,5 +71,8 @@ def frame_destination(output_root: Path, clip: dict, frame_number: int) -> Path:
 def representative_times(start_time: float, end_time: float, count: int) -> list[float]:
     if count == 1:
         return [(start_time + end_time) / 2.0]
+    if count == 3:
+        span = max(0.0, end_time - start_time)
+        return [start_time + span * 0.1, start_time + span * 0.5, start_time + span * 0.9]
     span = max(0.0, end_time - start_time)
     return [start_time + span * (index + 1) / (count + 1) for index in range(count)]

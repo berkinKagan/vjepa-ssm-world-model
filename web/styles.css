@@ -119,35 +119,47 @@ button:disabled {
   color: #42545d;
 }
 
-.summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+.diagnostics {
   margin: 18px 0 0;
 }
 
-.summary[hidden] {
+.diagnostics[hidden] {
   display: none;
 }
 
-.summary div {
+.diagnostics summary {
+  color: #28505e;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.diagnostics dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 0;
+}
+
+.diagnostics div {
   border: 1px solid #dce4e8;
   border-radius: 8px;
   padding: 10px 12px;
   background: #f8fafb;
 }
 
-.summary dt {
+.diagnostics dt {
   color: #5a6d76;
   font-size: 12px;
   font-weight: 800;
 }
 
-.summary dd {
+.diagnostics dd {
   margin: 4px 0 0;
   color: #17202a;
   font-size: 16px;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .resultsHeader {
@@ -185,12 +197,24 @@ h2 {
   background: #f8fafb;
 }
 
-.resultCard img {
+.resultCard img,
+.framePlaceholder {
   width: 100%;
   aspect-ratio: 16 / 9;
-  object-fit: cover;
   border-radius: 6px;
   background: #e8eef1;
+}
+
+.resultCard img {
+  object-fit: cover;
+}
+
+.framePlaceholder {
+  display: grid;
+  place-items: center;
+  color: #5a6d76;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .resultBody {
@@ -225,7 +249,7 @@ h2 {
     grid-template-columns: 1fr;
   }
 
-  .summary {
+  .diagnostics dl {
     grid-template-columns: 1fr;
   }
 }

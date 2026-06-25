@@ -14,6 +14,7 @@ outputs/predictions/*
 outputs/benchmarks/*
 outputs/frame_cache/*
 outputs/scene_index/*
+outputs/aligner/*
 !outputs/embeddings/.gitkeep
 !outputs/metadata/.gitkeep
 !outputs/checkpoints/.gitkeep
@@ -21,3 +22,4 @@ outputs/scene_index/*
 !outputs/benchmarks/.gitkeep
 !outputs/frame_cache/.gitkeep
 !outputs/scene_index/.gitkeep
+!outputs/aligner/.gitkeep

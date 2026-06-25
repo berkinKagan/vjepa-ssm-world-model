@@ -14,6 +14,7 @@ from experiments.benchmark import run_latent_benchmark
 from experiments.run_manager import DEFAULT_SSM_CONFIG_PATH, load_ssm_config
 from experiments.run_manager import save_json
 from scene_search.indexer import build_scene_index
+from scene_search.hybrid_retriever import hybrid_search_scene_index
 from scene_search.ollama_client import OllamaClient
 from scene_search.retriever import search_scene_index
 from scene_search.storage import list_scene_indexes
@@ -370,7 +371,7 @@ def run_scene_search_job(job_id: str, query: str, top_k: int | None, index_path:
         if enable_llm_reranking is not None:
             config["enable_llm_reranking"] = enable_llm_reranking
         update_scene_job(job_id, status="running", stage="scene_search", progress=0.2, message="searching scene index")
-        result = search_scene_index(config, query, index_path, top_k)
+        result = hybrid_search_scene_index(config, query, index_path, top_k)
         result["results"] = [add_frame_urls(item) for item in result["results"]]
         update_scene_job(job_id, status="completed", stage="completed", progress=1.0, message="completed", results=result)
     except Exception as exc:
@@ -393,10 +394,10 @@ def run_demo_search_job(job_id: str, video_path: str, query: str, top_k: int) ->
         update_demo_job(job_id, progress=0.45, message="Building full-video scene index")
         result = build_scene_index(config, embedding_path, progress_callback=lambda done, total: update_demo_job(job_id, status="running", progress=0.45 + 0.35 * (done / total if total else 0.0), message=f"Captioning segment {done} / {total}"))
         update_demo_job(job_id, progress=0.85, message="Searching scenes")
-        search = search_scene_index(config, query, result["index_file"], top_k)
+        search = hybrid_search_scene_index(config, query, result["index_file"], top_k)
         search["results"] = [add_frame_urls(item) for item in search["results"]]
-        diagnostics = {key: result.get(key) for key in ["video_duration", "segment_count", "first_segment_start", "last_segment_end", "coverage_ratio", "warning", "reused"] if key in result}
-        payload = {"query": query, "video_path": video_path, "embedding_path": str(embedding_path), "metadata_path": str(metadata_path) if metadata_path else None, "index_file": result["index_file"], "diagnostics": diagnostics, "results": search["results"]}
+        diagnostics = {key: result.get(key) for key in ["video_duration", "segment_count", "first_segment_start", "last_segment_end", "coverage_ratio", "warning", "reused", "segment_source", "frames_per_segment", "segment_latents_file", "matched_count", "latent_dim"] if key in result}
+        payload = {"job_id": job_id, "query": query, "video_path": video_path, "embedding_path": str(embedding_path), "metadata_path": str(metadata_path) if metadata_path else None, "index_file": result["index_file"], "video_duration": result.get("video_duration"), "segment_count": result.get("segment_count"), "coverage_ratio": result.get("coverage_ratio"), "diagnostics": diagnostics, "retrieval_mode": search.get("retrieval_mode"), "aligner_status": search.get("aligner_status"), "reranking_status": search.get("reranking_status"), "results": search["results"]}
         update_demo_job(job_id, status="completed", progress=1.0, message="Done", results=payload)
     except Exception as exc:
         update_demo_job(job_id, status="failed", progress=0.0, message="Failed", error=str(exc))

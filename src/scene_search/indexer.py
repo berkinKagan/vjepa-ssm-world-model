@@ -1,11 +1,16 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from scene_search.captioner import SceneCaptioner
 from scene_search.frame_sampler import sample_clip_frames
+from scene_search.latent_aligner import ensure_text_latent_aligner
 from scene_search.schemas import SceneRecord
 from scene_search.segments import coverage_diagnostics, dense_video_segments, get_video_duration
-from scene_search.storage import load_scene_index_metadata, save_scene_index
+from scene_search.segment_latents import attach_segment_latents
+from scene_search.storage import load_scene_index_metadata, load_scene_records, save_scene_index
 from scene_search.text_embedder import TextEmbedder
 from storage.load_embeddings import load_embedding_artifact, load_metadata
 from utils.paths import resolve_project_path
@@ -34,13 +39,16 @@ def build_scene_index(config: dict, embedding_path: str | Path, progress_callbac
             frame_paths = []
         caption, backend, model = captioner.caption_clip(frame_paths, metadata, segment)
         segment_index = int(segment["segment_index"])
-        record = SceneRecord(scene_id=f"{resolved_embedding.stem}_segment_{segment_index:04d}", video_path=str(resolve_project_path(video_path)), embedding_path=str(resolved_embedding), metadata_path=str(metadata_path) if metadata_path else None, segment_index=segment_index, start_time=float(segment["start_time"]), end_time=float(segment["end_time"]), caption=caption, frame_paths=frame_paths, caption_backend=backend, ollama_model=model, created_at=datetime.now(timezone.utc).isoformat(), segment_source=config.get("segment_source", "dense_video"), clip_index=segment.get("clip_index"))
+        record = SceneRecord(scene_id=f"{resolved_embedding.stem}_segment_{segment_index:04d}", video_path=str(resolve_project_path(video_path)), embedding_path=str(resolved_embedding), metadata_path=str(metadata_path) if metadata_path else None, segment_index=segment_index, start_time=float(segment["start_time"]), end_time=float(segment["end_time"]), caption=caption["searchable_summary"], raw_caption=caption["raw_caption"], clean_caption=caption["clean_caption"], searchable_summary=caption["searchable_summary"], frame_paths=frame_paths, caption_backend=backend, ollama_model=model, created_at=datetime.now(timezone.utc).isoformat(), segment_source=config.get("segment_source", "dense_video"), clip_index=segment.get("clip_index"))
         records.append(record)
         if progress_callback is not None:
             progress_callback(index, total)
     embedder = TextEmbedder(config["text_embedding_model"], config["device"])
-    caption_embeddings = embedder.encode([record.caption for record in records])
-    index_metadata = {**diagnostics, "segment_source": config.get("segment_source", "dense_video"), "segment_length_seconds": float(config.get("segment_length_seconds", 8.0)), "segment_stride_seconds": float(config.get("segment_stride_seconds", 8.0)), "min_segment_seconds": float(config.get("min_segment_seconds", 2.0)), "frames_per_segment": frames_per_segment(config), "embedding_model": config["text_embedding_model"], "caption_backend": config["caption_backend"], "ollama_model": config.get("ollama_model"), "reused": False}
+    caption_embeddings = embedder.encode([record.searchable_summary for record in records])
+    latent_path = resolve_project_path(config["scene_index_dir"]) / f"{resolved_embedding.stem}_vjepa_latents.npy"
+    latent_info = attach_segment_latents(resolved_embedding, metadata, segments, latent_path)
+    aligner_status = ensure_text_latent_aligner(config, caption_embeddings, latent_info.get("latents_file")) if bool(config.get("train_text_latent_aligner", True)) else {"status": "disabled", "checkpoint": None}
+    index_metadata = {**diagnostics, **latent_info, "segment_latents_file": latent_info.get("latents_file"), "aligner_status": aligner_status, "segment_source": config.get("segment_source", "dense_video"), "segment_length_seconds": float(config.get("segment_length_seconds", 8.0)), "segment_stride_seconds": float(config.get("segment_stride_seconds", 8.0)), "min_segment_seconds": float(config.get("min_segment_seconds", 2.0)), "frames_per_segment": frames_per_segment(config), "embedding_model": config["text_embedding_model"], "caption_backend": config["caption_backend"], "ollama_model": config.get("ollama_model"), "reused": False}
     output = save_scene_index(records, caption_embeddings, config["scene_index_dir"], resolved_embedding.stem, index_metadata)
     output["embedding_backend"] = embedder.backend
     return output
@@ -55,7 +63,27 @@ def cached_scene_index(config: dict, embedding_path: Path) -> dict | None:
     metadata = load_scene_index_metadata(index_path)
     if not reusable_index(config, metadata):
         return None
+    if has_failed_captions(index_path):
+        return None
+    metadata = ensure_cached_aligner(config, metadata, embeddings_path, metadata_path)
     return {**metadata, "index_file": str(index_path), "embeddings_file": str(embeddings_path), "reused": True}
+
+
+def ensure_cached_aligner(config: dict, metadata: dict, embeddings_path: Path, metadata_path: Path) -> dict:
+    if not bool(config.get("train_text_latent_aligner", True)):
+        return metadata
+    status = metadata.get("aligner_status")
+    checkpoint = status.get("checkpoint") if isinstance(status, dict) else None
+    if checkpoint and resolve_project_path(checkpoint).exists():
+        return metadata
+    latent_path = metadata.get("segment_latents_file") or metadata.get("latents_file")
+    if not latent_path or not embeddings_path.exists():
+        return metadata
+    caption_embeddings = np.load(embeddings_path)
+    metadata = {**metadata, "aligner_status": ensure_text_latent_aligner(config, caption_embeddings, latent_path)}
+    with metadata_path.open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2)
+    return metadata
 
 
 def reusable_index(config: dict, metadata: dict) -> bool:
@@ -64,6 +92,18 @@ def reusable_index(config: dict, metadata: dict) -> bool:
         if metadata.get(key) != value:
             return False
     return float(metadata.get("coverage_ratio", 0.0)) >= 0.95
+
+
+def has_failed_captions(index_path: Path) -> bool:
+    failed_markers = ["HTTP Error 400", "Ollama HTTP 400", "Bad Request", "No Ollama vision model is available"]
+    try:
+        for record in load_scene_records(index_path):
+            text = " ".join(str(record.get(key, "")) for key in ["caption", "raw_caption", "clean_caption", "searchable_summary"])
+            if any(marker in text for marker in failed_markers):
+                return True
+    except Exception:
+        return True
+    return False
 
 
 def build_segments(config: dict, metadata: dict, video_path: str) -> tuple[list[dict], float]:

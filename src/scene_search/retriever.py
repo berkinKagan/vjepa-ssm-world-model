@@ -41,4 +41,6 @@ def cosine_scores(query_embedding: np.ndarray, embeddings: np.ndarray) -> np.nda
 def make_result(rank: int, score: float, record: dict) -> SceneSearchResult:
     segment_index = int(record.get("segment_index", record.get("clip_index", 0)))
     clip_index = record.get("clip_index")
-    return SceneSearchResult(rank=rank, score=score, scene_id=record["scene_id"], caption=record["caption"], clip_index=int(clip_index) if clip_index is not None else None, segment_index=segment_index, start_time=float(record["start_time"]), end_time=float(record["end_time"]), video_path=record["video_path"], frame_paths=list(record.get("frame_paths", [])), embedding_path=record.get("embedding_path"))
+    caption = record.get("clean_caption") or record["caption"]
+    summary = record.get("searchable_summary") or record["caption"]
+    return SceneSearchResult(rank=rank, score=score, scene_id=record["scene_id"], caption=caption, searchable_summary=summary, clip_index=int(clip_index) if clip_index is not None else None, segment_index=segment_index, start_time=float(record["start_time"]), end_time=float(record["end_time"]), video_path=record["video_path"], frame_paths=list(record.get("frame_paths", [])), embedding_path=record.get("embedding_path"), caption_score=score, final_score=score, retrieval_mode="caption_only")

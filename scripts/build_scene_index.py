@@ -29,7 +29,7 @@ def main() -> None:
 
 
 def print_progress(done: int, total: int) -> None:
-    print(f"indexed {done}/{total} clips", flush=True)
+    print(f"indexed {done}/{total} segments", flush=True)
 
 
 if __name__ == "__main__":

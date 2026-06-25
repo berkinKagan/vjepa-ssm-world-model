@@ -3,7 +3,7 @@
 Research prototype for V-JEPA latent video dynamics.
 
 Phase 1 extracts frozen V-JEPA video embeddings from local videos. Phase 2 trains a latent sequence model over those saved embeddings to forecast future V-JEPA latent states.
-Phase 3 adds text-to-scene search over already processed videos using clip captions and text embeddings.
+Phase 3 adds hybrid text-to-scene search over already processed videos using Ollama captions, text embeddings, V-JEPA latents, and a small text-to-latent aligner.
 
 ## Setup
 
@@ -64,7 +64,7 @@ Expected local models:
 - `llama3.2-vision:11b`
 - `llama3.1:8b`
 
-The simplified page lets you upload a video, type a natural-language scene query, click `Search Video`, and view the best matching scenes. The backend automatically extracts V-JEPA features, samples frames, captions clips with local Ollama, builds the scene index, searches captions, and returns matching timestamps.
+The simplified page lets you upload a video, type a natural-language scene query, click `Search Video`, and view the best matching scenes. The backend automatically extracts or reuses V-JEPA features, builds a dense full-video scene index, captions segments with local Ollama, attaches nearest V-JEPA latents, trains or loads the text-to-latent aligner when enough pairs exist, runs hybrid retrieval, deduplicates nearby matches, and optionally reranks candidates with `llama3.1:8b`.
 
 ## Phase 2: Train Latent Dynamics
 
@@ -111,17 +111,20 @@ Training saves:
 
 Prediction saves a `.pt` file with predicted future latents, source context, checkpoint path, source embedding path, and prediction shape.
 
-## Phase 3: Text-To-Scene Search
+## Phase 3: Hybrid Text-To-Scene Search
 
-Phase 3 does not compare text directly with V-JEPA embeddings. V-JEPA latents are not text-aligned by default. Instead, the scene-search pipeline builds a caption index:
+Phase 3 does not compare text directly with raw V-JEPA embeddings. V-JEPA latents are not text-aligned by default, so the scene-search pipeline trains a lightweight projection head from caption embeddings into pooled V-JEPA latent space when at least 50 aligned segment pairs are available:
 
 ```text
 uploaded video
 -> create dense full-video segments
--> sample representative frames from each segment
--> caption frames with Ollama vision model or placeholder backend
+-> sample start/middle/end representative frames from each segment
+-> caption frames with llama3.2-vision:11b
 -> embed captions with a text embedding model
--> search captions with a text query
+-> attach nearest pooled V-JEPA latent to each dense segment
+-> train or load text_caption_embedding -> V-JEPA latent aligner
+-> combine caption similarity and aligned V-JEPA latent similarity
+-> optionally rerank candidates with llama3.1:8b
 -> return matching clips and timestamps
 ```
 
@@ -149,27 +152,42 @@ Search indexed scenes:
 python scripts/search_scene.py --config configs/scene_search.yaml --query "find the scene where someone enters the room" --top-k 5
 ```
 
+Debug hybrid search:
+
+```bash
+python scripts/debug_hybrid_search.py --config configs/scene_search.yaml --video path/to/video.mp4 --query "person standing near the window"
+```
+
 Default scene segmentation:
 
 - `segment_source`: `dense_video`
 - `segment_length_seconds`: `8.0`
 - `segment_stride_seconds`: `8.0`
 - `min_segment_seconds`: `2.0`
-- `frames_per_segment`: `1`
+- `frames_per_segment`: `3`
 
 For a 1731-second video, this creates about 217 searchable segments and indexes the full video instead of only the V-JEPA sampled clip times.
+
+Search is hard-blocked if full-video coverage is incomplete. If the dense index coverage ratio is below `0.95`, search returns `Scene index does not cover the full video.`
 
 Scene index outputs:
 
 - `outputs/scene_index/*.jsonl`
 - `outputs/scene_index/*.npy`
 - `outputs/frame_cache/**/*.jpg`
+- `outputs/scene_index/*_vjepa_latents.npy`
+- `outputs/aligner/text_to_vjepa_best.pt`
+- `outputs/aligner/text_to_vjepa_latest.pt`
+- `outputs/aligner/config.yaml`
+- `outputs/aligner/metrics.json`
 
-Each scene row contains video path, embedding path, metadata path, segment index, start/end time, caption, sampled frame paths, caption backend, Ollama model, creation time, and segment source.
+Each scene row contains video path, embedding path, metadata path, segment index, start/end time, raw caption, cleaned caption, searchable summary, sampled frame paths, caption backend, Ollama model, creation time, and segment source.
 
 Repeated uploads of the same video reuse the same content-hash upload path. Existing V-JEPA artifacts and valid dense scene indexes are reused when their settings match.
 
 If no vision-capable Ollama model is available, indexing falls back to placeholder captions based on metadata so search infrastructure can still run.
+
+Hybrid retrieval returns `caption_score`, `latent_score`, `final_score`, and `retrieval_mode`. If no trained aligner exists, search falls back to caption retrieval with `retrieval_mode: hybrid_without_aligner_fallback`.
 
 ## API
 
@@ -255,8 +273,16 @@ Key settings:
 - `segment_stride_seconds`: dense segment stride
 - `min_segment_seconds`: minimum final partial segment duration
 - `frames_per_segment`: representative frames per dense segment
+- `retrieval_mode`: `hybrid` by default, or `caption_only`
+- `caption_weight`: caption similarity weight in hybrid retrieval
+- `latent_weight`: projected V-JEPA latent similarity weight in hybrid retrieval
 - `top_k`: default search result count
+- `candidate_k`: initial candidate pool before deduplication and reranking
 - `enable_llm_reranking`: optional Ollama reranking after vector retrieval
+- `enable_deduplication`: suppress overlapping or near-duplicate captions
+- `train_text_latent_aligner`: train or load the text-to-V-JEPA projection head
+- `min_alignment_pairs`: minimum paired caption and V-JEPA latent examples before aligner training
+- `coverage_required`: block search when full-video dense coverage is incomplete
 
 ## Saved Artifact
 

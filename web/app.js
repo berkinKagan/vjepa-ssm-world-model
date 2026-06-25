@@ -5,10 +5,13 @@ const progressBar = document.querySelector("#progressBar");
 const statusText = document.querySelector("#statusText");
 const results = document.querySelector("#results");
 const resultCount = document.querySelector("#resultCount");
-const summary = document.querySelector("#summary");
+const diagnosticsPanel = document.querySelector("#diagnostics");
 const durationText = document.querySelector("#durationText");
 const segmentsText = document.querySelector("#segmentsText");
 const coverageText = document.querySelector("#coverageText");
+const retrievalModeText = document.querySelector("#retrievalModeText");
+const alignerStatusText = document.querySelector("#alignerStatusText");
+const rerankingStatusText = document.querySelector("#rerankingStatusText");
 
 let polling = null;
 
@@ -73,19 +76,24 @@ function pollStatus(jobId) {
 async function loadResults(jobId) {
   const response = await fetch(`/demo/results/${jobId}`);
   const data = await response.json();
-  const diagnostics = data.diagnostics || {};
-  renderDiagnostics(diagnostics);
+  renderDiagnostics(data);
   renderResults(data.results || []);
-  setStatus(diagnostics.warning || "Done", 1);
+  setStatus((data.diagnostics || {}).warning || "Done", 1);
 }
 
-function renderDiagnostics(diagnostics) {
-  const duration = Number(diagnostics.video_duration || 0);
-  const coverage = Number(diagnostics.coverage_ratio || 0);
-  durationText.textContent = duration ? `${duration.toFixed(2)}s` : "-";
-  segmentsText.textContent = diagnostics.segment_count ?? "-";
+function renderDiagnostics(data) {
+  const diagnostics = data.diagnostics || {};
+  const videoDuration = data.video_duration ?? diagnostics.video_duration;
+  const segmentCount = data.segment_count ?? diagnostics.segment_count;
+  const coverageRatio = data.coverage_ratio ?? diagnostics.coverage_ratio;
+  const coverage = Number(coverageRatio || 0);
+  durationText.textContent = videoDuration ? `${Number(videoDuration).toFixed(2)}s` : "-";
+  segmentsText.textContent = segmentCount ?? "-";
   coverageText.textContent = coverage ? `${Math.round(coverage * 100)}%` : "-";
-  summary.hidden = false;
+  retrievalModeText.textContent = data.retrieval_mode || "-";
+  alignerStatusText.textContent = data.aligner_status || "-";
+  rerankingStatusText.textContent = data.reranking_status || "-";
+  diagnosticsPanel.hidden = false;
 }
 
 function renderResults(items) {
@@ -94,21 +102,34 @@ function renderResults(items) {
   for (const item of items) {
     const card = document.createElement("article");
     card.className = "resultCard";
-    const image = document.createElement("img");
-    image.alt = "";
-    image.src = item.frame_urls && item.frame_urls[0] ? item.frame_urls[0] : "";
+    const preview = makePreview(item);
     const body = document.createElement("div");
     body.className = "resultBody";
     const title = document.createElement("div");
     title.className = "resultTitle";
-    title.textContent = `#${item.rank} · score ${Number(item.score).toFixed(3)} · ${formatTime(item.start_time)}-${formatTime(item.end_time)}`;
+    const score = item.final_score ?? item.score;
+    title.textContent = `#${item.rank} · score ${Number(score).toFixed(3)} · ${formatTime(item.start_time)}-${formatTime(item.end_time)}`;
     const caption = document.createElement("p");
     caption.className = "caption";
-    caption.textContent = item.caption;
+    caption.textContent = item.searchable_summary || item.caption;
     body.append(title, caption);
-    card.append(image, body);
+    card.append(preview, body);
     results.appendChild(card);
   }
+}
+
+function makePreview(item) {
+  const url = item.frame_urls && item.frame_urls[0] ? item.frame_urls[0] : "";
+  if (url) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = url;
+    return image;
+  }
+  const placeholder = document.createElement("div");
+  placeholder.className = "framePlaceholder";
+  placeholder.textContent = "No frame preview";
+  return placeholder;
 }
 
 function setStatus(message, progress) {
@@ -120,10 +141,13 @@ function clearResults() {
   results.innerHTML = "";
   resultCount.textContent = "0 results";
   progressBar.style.width = "0%";
-  summary.hidden = true;
+  diagnosticsPanel.hidden = true;
   durationText.textContent = "-";
   segmentsText.textContent = "-";
   coverageText.textContent = "-";
+  retrievalModeText.textContent = "-";
+  alignerStatusText.textContent = "-";
+  rerankingStatusText.textContent = "-";
 }
 
 function formatTime(value) {

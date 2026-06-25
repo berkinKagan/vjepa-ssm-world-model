@@ -30,20 +30,35 @@
           <div id="progressBar"></div>
         </div>
         <p id="statusText">Waiting for a video and query.</p>
-        <dl class="summary" id="summary" hidden>
-          <div>
-            <dt>Duration</dt>
-            <dd id="durationText">-</dd>
-          </div>
-          <div>
-            <dt>Segments</dt>
-            <dd id="segmentsText">-</dd>
-          </div>
-          <div>
-            <dt>Coverage</dt>
-            <dd id="coverageText">-</dd>
-          </div>
-        </dl>
+        <details class="diagnostics" id="diagnostics" hidden>
+          <summary>Developer diagnostics</summary>
+          <dl>
+            <div>
+              <dt>Duration</dt>
+              <dd id="durationText">-</dd>
+            </div>
+            <div>
+              <dt>Segments</dt>
+              <dd id="segmentsText">-</dd>
+            </div>
+            <div>
+              <dt>Coverage</dt>
+              <dd id="coverageText">-</dd>
+            </div>
+            <div>
+              <dt>Retrieval</dt>
+              <dd id="retrievalModeText">-</dd>
+            </div>
+            <div>
+              <dt>Aligner</dt>
+              <dd id="alignerStatusText">-</dd>
+            </div>
+            <div>
+              <dt>Reranking</dt>
+              <dd id="rerankingStatusText">-</dd>
+            </div>
+          </dl>
+        </details>
       </section>
       <section class="resultsSection">
         <div class="resultsHeader">
