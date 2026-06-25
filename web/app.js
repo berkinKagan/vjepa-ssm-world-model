@@ -1,243 +1,133 @@
-const statusBadge = document.querySelector("#statusBadge");
-const pipelineTab = document.querySelector("#pipelineTab");
-const benchmarkTab = document.querySelector("#benchmarkTab");
-const pipelineView = document.querySelector("#pipelineView");
-const benchmarkView = document.querySelector("#benchmarkView");
-const fileInput = document.querySelector("#fileInput");
-const videoSelect = document.querySelector("#videoSelect");
-const pipelineEmbeddingSelect = document.querySelector("#pipelineEmbeddingSelect");
-const runPipelineButton = document.querySelector("#runPipelineButton");
-const pipelineProgressBar = document.querySelector("#pipelineProgressBar");
-const pipelineStatusText = document.querySelector("#pipelineStatusText");
-const embeddingPath = document.querySelector("#embeddingPath");
-const checkpointPath = document.querySelector("#checkpointPath");
-const predictionPath = document.querySelector("#predictionPath");
-const predictionShape = document.querySelector("#predictionShape");
-const pipelineOutput = document.querySelector("#pipelineOutput");
-const pipelineModelText = document.querySelector("#pipelineModelText");
-const benchmarkEmbeddingSelect = document.querySelector("#benchmarkEmbeddingSelect");
-const benchmarkStepsInput = document.querySelector("#benchmarkStepsInput");
-const runBenchmarkButton = document.querySelector("#runBenchmarkButton");
-const benchmarkProgressBar = document.querySelector("#benchmarkProgressBar");
-const benchmarkStatusText = document.querySelector("#benchmarkStatusText");
-const benchmarkEmbeddingPath = document.querySelector("#benchmarkEmbeddingPath");
-const benchmarkOutputPath = document.querySelector("#benchmarkOutputPath");
-const benchmarkOutput = document.querySelector("#benchmarkOutput");
-const benchmarkModelText = document.querySelector("#benchmarkModelText");
+const videoInput = document.querySelector("#videoInput");
+const queryInput = document.querySelector("#queryInput");
+const searchButton = document.querySelector("#searchButton");
+const progressBar = document.querySelector("#progressBar");
+const statusText = document.querySelector("#statusText");
+const results = document.querySelector("#results");
+const resultCount = document.querySelector("#resultCount");
+const summary = document.querySelector("#summary");
+const durationText = document.querySelector("#durationText");
+const segmentsText = document.querySelector("#segmentsText");
+const coverageText = document.querySelector("#coverageText");
 
-let pipelinePolling = null;
-let benchmarkPolling = null;
+let polling = null;
 
-async function loadVideos() {
-  try {
-    const response = await fetch("/videos");
-    const data = await response.json();
-    fillSelect(videoSelect, data.videos, "No sample videos found", "Select sample video");
-  } catch (error) {
-    videoSelect.innerHTML = '<option value="">Could not load videos</option>';
-  }
-}
-
-async function loadEmbeddings() {
-  try {
-    const response = await fetch("/embeddings");
-    const data = await response.json();
-    fillSelect(pipelineEmbeddingSelect, data.files, "No embeddings found", "Select existing latents");
-    fillSelect(benchmarkEmbeddingSelect, data.files, "No embeddings found", "Select embeddings");
-  } catch (error) {
-    pipelineEmbeddingSelect.innerHTML = '<option value="">Could not load embeddings</option>';
-    benchmarkEmbeddingSelect.innerHTML = '<option value="">Could not load embeddings</option>';
-  }
-}
-
-function fillSelect(select, values, emptyText, promptText) {
-  select.innerHTML = "";
-  const empty = document.createElement("option");
-  empty.value = "";
-  empty.textContent = values.length ? promptText : emptyText;
-  select.appendChild(empty);
-  for (const value of values) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
-    select.appendChild(option);
-  }
-}
-
-async function startPipeline() {
-  resetPipeline();
-  const formData = new FormData();
-  if (pipelineEmbeddingSelect.value) {
-    formData.append("embedding", pipelineEmbeddingSelect.value);
-  } else if (fileInput.files.length > 0) {
-    formData.append("file", fileInput.files[0]);
-  } else if (videoSelect.value) {
-    formData.append("video_path", videoSelect.value);
-  } else {
-    setPipelineStatus("idle", "Choose latents or a video.", 0);
+async function startSearch() {
+  clearResults();
+  const file = videoInput.files[0];
+  const query = queryInput.value.trim();
+  if (!file) {
+    setStatus("Choose a video first.", 0);
     return;
   }
-  runPipelineButton.disabled = true;
-  setPipelineStatus("queued", "Submitting pipeline job.", 0);
-  try {
-    const response = await fetch("/pipeline/run", { method: "POST", body: formData });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || "Pipeline request failed");
-    }
-    const data = await response.json();
-    pollPipeline(data.job_id);
-  } catch (error) {
-    runPipelineButton.disabled = false;
-    setPipelineStatus("failed", error.message, 0);
-  }
-}
-
-function pollPipeline(jobId) {
-  if (pipelinePolling) {
-    clearInterval(pipelinePolling);
-  }
-  pipelinePolling = setInterval(async () => {
-    try {
-      const response = await fetch(`/pipeline/status/${jobId}`);
-      const data = await response.json();
-      renderPipelineStatus(data);
-      if (data.status === "completed") {
-        clearInterval(pipelinePolling);
-        runPipelineButton.disabled = false;
-        await loadPipelineResults(jobId);
-        await loadEmbeddings();
-      }
-      if (data.status === "failed") {
-        clearInterval(pipelinePolling);
-        runPipelineButton.disabled = false;
-      }
-    } catch (error) {
-      clearInterval(pipelinePolling);
-      runPipelineButton.disabled = false;
-      setPipelineStatus("failed", error.message, 0);
-    }
-  }, 1000);
-}
-
-async function loadPipelineResults(jobId) {
-  const response = await fetch(`/pipeline/results/${jobId}`);
-  const result = await response.json();
-  pipelineOutput.textContent = JSON.stringify(result, null, 2);
-  pipelineModelText.textContent = `model: ${result.model_type || "-"}`;
-}
-
-function renderPipelineStatus(data) {
-  setPipelineStatus(data.status, data.error || data.message, data.progress);
-  embeddingPath.textContent = data.embedding_path || "-";
-  checkpointPath.textContent = data.checkpoint_path || "-";
-  predictionPath.textContent = data.prediction_path || "-";
-  predictionShape.textContent = data.prediction_shape ? JSON.stringify(data.prediction_shape) : "-";
-}
-
-function setPipelineStatus(status, message, progress) {
-  statusBadge.textContent = status;
-  pipelineStatusText.textContent = message;
-  pipelineProgressBar.style.width = `${Math.round((progress || 0) * 100)}%`;
-}
-
-function resetPipeline() {
-  embeddingPath.textContent = "-";
-  checkpointPath.textContent = "-";
-  predictionPath.textContent = "-";
-  predictionShape.textContent = "-";
-  pipelineOutput.textContent = "{}";
-  pipelineModelText.textContent = "model: -";
-}
-
-async function startBenchmark() {
-  if (!benchmarkEmbeddingSelect.value) {
-    setBenchmarkStatus("idle", "Choose embeddings first.", 0);
+  if (!query) {
+    setStatus("Type a scene query first.", 0);
     return;
   }
-  resetBenchmark();
-  runBenchmarkButton.disabled = true;
-  setBenchmarkStatus("queued", "Submitting benchmark job.", 0);
+  searchButton.disabled = true;
+  setStatus("Uploading video", 0.02);
   try {
     const formData = new FormData();
-    formData.append("embedding", benchmarkEmbeddingSelect.value);
-    formData.append("steps", benchmarkStepsInput.value || "5");
-    const response = await fetch("/benchmark/run", { method: "POST", body: formData });
+    formData.append("file", file);
+    formData.append("query", query);
+    formData.append("top_k", "5");
+    const response = await fetch("/demo/search-video", { method: "POST", body: formData });
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.detail || "Benchmark request failed");
+      throw new Error(error.detail || "Search request failed");
     }
     const data = await response.json();
-    pollBenchmark(data.job_id);
+    pollStatus(data.job_id);
   } catch (error) {
-    runBenchmarkButton.disabled = false;
-    setBenchmarkStatus("failed", error.message, 0);
+    searchButton.disabled = false;
+    setStatus(error.message, 0);
   }
 }
 
-function pollBenchmark(jobId) {
-  if (benchmarkPolling) {
-    clearInterval(benchmarkPolling);
+function pollStatus(jobId) {
+  if (polling) {
+    clearInterval(polling);
   }
-  benchmarkPolling = setInterval(async () => {
+  polling = setInterval(async () => {
     try {
-      const response = await fetch(`/benchmark/status/${jobId}`);
+      const response = await fetch(`/demo/status/${jobId}`);
       const data = await response.json();
-      renderBenchmarkStatus(data);
+      setStatus(data.error || data.message, data.progress);
       if (data.status === "completed") {
-        clearInterval(benchmarkPolling);
-        runBenchmarkButton.disabled = false;
-        await loadBenchmarkResults(jobId);
+        clearInterval(polling);
+        searchButton.disabled = false;
+        await loadResults(jobId);
       }
       if (data.status === "failed") {
-        clearInterval(benchmarkPolling);
-        runBenchmarkButton.disabled = false;
+        clearInterval(polling);
+        searchButton.disabled = false;
       }
     } catch (error) {
-      clearInterval(benchmarkPolling);
-      runBenchmarkButton.disabled = false;
-      setBenchmarkStatus("failed", error.message, 0);
+      clearInterval(polling);
+      searchButton.disabled = false;
+      setStatus(error.message, 0);
     }
   }, 1000);
 }
 
-async function loadBenchmarkResults(jobId) {
-  const response = await fetch(`/benchmark/results/${jobId}`);
-  const result = await response.json();
-  benchmarkOutput.textContent = JSON.stringify(result, null, 2);
-  benchmarkModelText.textContent = `model: ${result.actual_model_type || "-"}`;
-  benchmarkOutputPath.textContent = result.benchmark_file || "-";
+async function loadResults(jobId) {
+  const response = await fetch(`/demo/results/${jobId}`);
+  const data = await response.json();
+  const diagnostics = data.diagnostics || {};
+  renderDiagnostics(diagnostics);
+  renderResults(data.results || []);
+  setStatus(diagnostics.warning || "Done", 1);
 }
 
-function renderBenchmarkStatus(data) {
-  setBenchmarkStatus(data.status, data.error || data.message, data.progress);
-  benchmarkEmbeddingPath.textContent = data.embedding_path || "-";
+function renderDiagnostics(diagnostics) {
+  const duration = Number(diagnostics.video_duration || 0);
+  const coverage = Number(diagnostics.coverage_ratio || 0);
+  durationText.textContent = duration ? `${duration.toFixed(2)}s` : "-";
+  segmentsText.textContent = diagnostics.segment_count ?? "-";
+  coverageText.textContent = coverage ? `${Math.round(coverage * 100)}%` : "-";
+  summary.hidden = false;
 }
 
-function setBenchmarkStatus(status, message, progress) {
-  statusBadge.textContent = status;
-  benchmarkStatusText.textContent = message;
-  benchmarkProgressBar.style.width = `${Math.round((progress || 0) * 100)}%`;
+function renderResults(items) {
+  resultCount.textContent = `${items.length} ${items.length === 1 ? "result" : "results"}`;
+  results.innerHTML = "";
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "resultCard";
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = item.frame_urls && item.frame_urls[0] ? item.frame_urls[0] : "";
+    const body = document.createElement("div");
+    body.className = "resultBody";
+    const title = document.createElement("div");
+    title.className = "resultTitle";
+    title.textContent = `#${item.rank} · score ${Number(item.score).toFixed(3)} · ${formatTime(item.start_time)}-${formatTime(item.end_time)}`;
+    const caption = document.createElement("p");
+    caption.className = "caption";
+    caption.textContent = item.caption;
+    body.append(title, caption);
+    card.append(image, body);
+    results.appendChild(card);
+  }
 }
 
-function resetBenchmark() {
-  benchmarkEmbeddingPath.textContent = "-";
-  benchmarkOutputPath.textContent = "-";
-  benchmarkOutput.textContent = "{}";
-  benchmarkModelText.textContent = "model: -";
+function setStatus(message, progress) {
+  statusText.textContent = message;
+  progressBar.style.width = `${Math.round((progress || 0) * 100)}%`;
 }
 
-function showTab(name) {
-  const benchmark = name === "benchmark";
-  pipelineView.hidden = benchmark;
-  benchmarkView.hidden = !benchmark;
-  pipelineTab.classList.toggle("active", !benchmark);
-  benchmarkTab.classList.toggle("active", benchmark);
+function clearResults() {
+  results.innerHTML = "";
+  resultCount.textContent = "0 results";
+  progressBar.style.width = "0%";
+  summary.hidden = true;
+  durationText.textContent = "-";
+  segmentsText.textContent = "-";
+  coverageText.textContent = "-";
 }
 
-pipelineTab.addEventListener("click", () => showTab("pipeline"));
-benchmarkTab.addEventListener("click", () => showTab("benchmark"));
-runPipelineButton.addEventListener("click", startPipeline);
-runBenchmarkButton.addEventListener("click", startBenchmark);
-loadVideos();
-loadEmbeddings();
+function formatTime(value) {
+  return `${Number(value).toFixed(2)}s`;
+}
+
+searchButton.addEventListener("click", startSearch);

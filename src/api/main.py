@@ -1,3 +1,4 @@
+import hashlib
 import shutil
 import uuid
 from pathlib import Path
@@ -12,6 +13,10 @@ from api.schemas import ExtractResponse, FileListResponse, SSMJobResponse, SSMSt
 from experiments.benchmark import run_latent_benchmark
 from experiments.run_manager import DEFAULT_SSM_CONFIG_PATH, load_ssm_config
 from experiments.run_manager import save_json
+from scene_search.indexer import build_scene_index
+from scene_search.ollama_client import OllamaClient
+from scene_search.retriever import search_scene_index
+from scene_search.storage import list_scene_indexes
 from ssm.predictor import predict_future_latents
 from ssm.trainer import train_ssm_forecaster
 from utils.paths import DEFAULT_CONFIG_PATH, PROJECT_ROOT, ensure_directory, load_config, resolve_config_path, resolve_project_path
@@ -22,11 +27,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 CONFIG = load_config(DEFAULT_CONFIG_PATH)
 SSM_CONFIG = load_ssm_config(DEFAULT_SSM_CONFIG_PATH)
+SCENE_CONFIG = load_config(PROJECT_ROOT / "configs" / "scene_search.yaml")
 WEB_DIR = PROJECT_ROOT / "web"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = Lock()
 SSM_JOBS: dict[str, dict] = {}
 SSM_JOBS_LOCK = Lock()
+SCENE_JOBS: dict[str, dict] = {}
+SCENE_JOBS_LOCK = Lock()
+DEMO_JOBS: dict[str, dict] = {}
+DEMO_JOBS_LOCK = Lock()
 EXTRACTOR: VJEPAExtractor | None = None
 EXTRACTOR_LOCK = Lock()
 
@@ -71,6 +81,20 @@ def embeddings() -> FileListResponse:
 @app.get("/checkpoints", response_model=FileListResponse)
 def checkpoints() -> FileListResponse:
     return FileListResponse(files=list_relative_files(resolve_project_path(SSM_CONFIG["checkpoints_dir"]), {".pt"}))
+
+
+@app.get("/ollama/status")
+def ollama_status() -> dict:
+    return OllamaClient(SCENE_CONFIG["ollama_base_url"]).status()
+
+
+@app.get("/ollama/models")
+def ollama_models() -> dict:
+    client = OllamaClient(SCENE_CONFIG["ollama_base_url"])
+    try:
+        return {"models": [model.to_dict() for model in client.models()]}
+    except Exception as exc:
+        return {"models": [], "error": str(exc)}
 
 
 @app.post("/ssm/train", response_model=SSMJobResponse)
@@ -147,6 +171,70 @@ def benchmark_results(job_id: str) -> dict:
     return job["metrics"]
 
 
+@app.post("/scene/index", response_model=SSMJobResponse)
+async def scene_index(background_tasks: BackgroundTasks, embedding: str = Form(...), ollama_model: str | None = Form(default=None), caption_backend: str | None = Form(default=None)) -> SSMJobResponse:
+    job_id = uuid.uuid4().hex
+    set_scene_job(job_id, {"status": "queued", "progress": 0.0, "message": "queued", "stage": "scene_index", "embedding_path": embedding})
+    background_tasks.add_task(run_scene_index_job, job_id, embedding, ollama_model, caption_backend)
+    return SSMJobResponse(job_id=job_id, status="queued")
+
+
+@app.get("/scene/index/status/{job_id}", response_model=SSMStatusResponse)
+def scene_index_status(job_id: str) -> SSMStatusResponse:
+    return ssm_status_response(job_id, get_scene_job(job_id))
+
+
+@app.post("/scene/search", response_model=SSMJobResponse)
+async def scene_search(background_tasks: BackgroundTasks, query: str = Form(...), top_k: int | None = Form(default=None), index_path: str | None = Form(default=None), enable_llm_reranking: bool | None = Form(default=None)) -> SSMJobResponse:
+    job_id = uuid.uuid4().hex
+    set_scene_job(job_id, {"status": "queued", "progress": 0.0, "message": "queued", "stage": "scene_search"})
+    background_tasks.add_task(run_scene_search_job, job_id, query, top_k, index_path, enable_llm_reranking)
+    return SSMJobResponse(job_id=job_id, status="queued")
+
+
+@app.get("/scene/search/results/{job_id}")
+def scene_search_results(job_id: str) -> dict:
+    job = get_scene_job(job_id)
+    if "results" not in job:
+        raise HTTPException(status_code=404, detail="Scene search results are not available for this job")
+    return job["results"]
+
+
+@app.get("/scene/indexes", response_model=FileListResponse)
+def scene_indexes() -> FileListResponse:
+    paths = list_scene_indexes(SCENE_CONFIG["scene_index_dir"])
+    files = []
+    for path in paths:
+        resolved = resolve_project_path(path)
+        try:
+            files.append(str(resolved.relative_to(PROJECT_ROOT)))
+        except ValueError:
+            files.append(str(resolved))
+    return FileListResponse(files=files)
+
+
+@app.post("/demo/search-video", response_model=SSMJobResponse)
+async def demo_search_video(background_tasks: BackgroundTasks, file: UploadFile = File(...), query: str = Form(...), top_k: int = Form(5)) -> SSMJobResponse:
+    selected_video = save_upload(file)
+    job_id = uuid.uuid4().hex
+    set_demo_job(job_id, {"status": "queued", "progress": 0.0, "message": "Uploading video", "video_path": str(selected_video), "query": query})
+    background_tasks.add_task(run_demo_search_job, job_id, str(selected_video), query, top_k)
+    return SSMJobResponse(job_id=job_id, status="queued")
+
+
+@app.get("/demo/status/{job_id}")
+def demo_status(job_id: str) -> dict:
+    return get_demo_job(job_id)
+
+
+@app.get("/demo/results/{job_id}")
+def demo_results(job_id: str) -> dict:
+    job = get_demo_job(job_id)
+    if "results" not in job:
+        raise HTTPException(status_code=404, detail="Demo results are not available for this job")
+    return job["results"]
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
@@ -156,10 +244,27 @@ def save_upload(file: UploadFile) -> Path:
     uploads_dir = resolve_config_path(CONFIG, "uploads_dir")
     ensure_directory(uploads_dir)
     name = Path(file.filename or "upload.mp4").name
-    destination = uploads_dir / f"{uuid.uuid4().hex}_{name}"
+    digest = file_digest(file)
+    suffix = Path(name).suffix.lower() or ".mp4"
+    destination = uploads_dir / f"{digest[:32]}{suffix}"
+    if destination.exists():
+        return destination
+    file.file.seek(0)
     with destination.open("wb") as handle:
         shutil.copyfileobj(file.file, handle)
     return destination
+
+
+def file_digest(file: UploadFile) -> str:
+    hasher = hashlib.sha256()
+    file.file.seek(0)
+    while True:
+        chunk = file.file.read(1024 * 1024)
+        if not chunk:
+            break
+        hasher.update(chunk)
+    file.file.seek(0)
+    return hasher.hexdigest()
 
 
 def resolve_input_video(video_path: str | None) -> Path:
@@ -245,6 +350,70 @@ def run_benchmark_job(job_id: str, embedding: str, steps: int, config_path: str 
         update_ssm_job(job_id, status="failed", progress=0.0, message="failed", error=str(exc))
 
 
+def run_scene_index_job(job_id: str, embedding: str, ollama_model: str | None, caption_backend: str | None) -> None:
+    try:
+        config = dict(SCENE_CONFIG)
+        if ollama_model:
+            config["ollama_model"] = ollama_model
+        if caption_backend:
+            config["caption_backend"] = caption_backend
+        update_scene_job(job_id, status="running", stage="scene_index", progress=0.02, message="building scene index", embedding_path=str(resolve_project_path(embedding)))
+        result = build_scene_index(config, embedding, progress_callback=lambda done, total: update_scene_job(job_id, status="running", stage="scene_index", progress=done / total if total else 0.0, message=f"indexed {done}/{total} segments"))
+        update_scene_job(job_id, status="completed", stage="completed", progress=1.0, message="completed", index_path=result["index_file"], results=result)
+    except Exception as exc:
+        update_scene_job(job_id, status="failed", progress=0.0, message="failed", error=str(exc))
+
+
+def run_scene_search_job(job_id: str, query: str, top_k: int | None, index_path: str | None, enable_llm_reranking: bool | None) -> None:
+    try:
+        config = dict(SCENE_CONFIG)
+        if enable_llm_reranking is not None:
+            config["enable_llm_reranking"] = enable_llm_reranking
+        update_scene_job(job_id, status="running", stage="scene_search", progress=0.2, message="searching scene index")
+        result = search_scene_index(config, query, index_path, top_k)
+        result["results"] = [add_frame_urls(item) for item in result["results"]]
+        update_scene_job(job_id, status="completed", stage="completed", progress=1.0, message="completed", results=result)
+    except Exception as exc:
+        update_scene_job(job_id, status="failed", progress=0.0, message="failed", error=str(exc))
+
+
+def run_demo_search_job(job_id: str, video_path: str, query: str, top_k: int) -> None:
+    try:
+        config = dict(SCENE_CONFIG)
+        cached = cached_extraction_paths(video_path)
+        if cached is None:
+            update_demo_job(job_id, status="running", progress=0.05, message="Extracting V-JEPA features")
+            extractor = get_extractor()
+            extraction = extractor.extract_video(video_path, progress_callback=lambda done, total: update_demo_job(job_id, status="running", progress=0.05 + 0.35 * (done / total if total else 0.0), message=f"Extracting V-JEPA features {done}/{total}"))
+            embedding_path = extraction.embeddings_path
+            metadata_path = extraction.metadata_path
+        else:
+            embedding_path, metadata_path = cached
+            update_demo_job(job_id, status="running", progress=0.4, message="Using cached V-JEPA features")
+        update_demo_job(job_id, progress=0.45, message="Building full-video scene index")
+        result = build_scene_index(config, embedding_path, progress_callback=lambda done, total: update_demo_job(job_id, status="running", progress=0.45 + 0.35 * (done / total if total else 0.0), message=f"Captioning segment {done} / {total}"))
+        update_demo_job(job_id, progress=0.85, message="Searching scenes")
+        search = search_scene_index(config, query, result["index_file"], top_k)
+        search["results"] = [add_frame_urls(item) for item in search["results"]]
+        diagnostics = {key: result.get(key) for key in ["video_duration", "segment_count", "first_segment_start", "last_segment_end", "coverage_ratio", "warning", "reused"] if key in result}
+        payload = {"query": query, "video_path": video_path, "embedding_path": str(embedding_path), "metadata_path": str(metadata_path) if metadata_path else None, "index_file": result["index_file"], "diagnostics": diagnostics, "results": search["results"]}
+        update_demo_job(job_id, status="completed", progress=1.0, message="Done", results=payload)
+    except Exception as exc:
+        update_demo_job(job_id, status="failed", progress=0.0, message="Failed", error=str(exc))
+
+
+def cached_extraction_paths(video_path: str | Path) -> tuple[Path, Path | None] | None:
+    video = resolve_project_path(video_path)
+    embeddings_dir = resolve_config_path(CONFIG, "embeddings_dir")
+    metadata_dir = resolve_config_path(CONFIG, "metadata_dir")
+    suffix = "." + CONFIG["storage"].get("format", "pt").lstrip(".")
+    embedding_path = embeddings_dir / f"{video.stem}{suffix}"
+    metadata_path = metadata_dir / f"{video.stem}.json"
+    if embedding_path.exists():
+        return embedding_path, metadata_path if metadata_path.exists() else None
+    return None
+
+
 def get_extractor() -> VJEPAExtractor:
     global EXTRACTOR
     with EXTRACTOR_LOCK:
@@ -287,8 +456,54 @@ def get_ssm_job(job_id: str) -> dict:
         return dict(SSM_JOBS[job_id])
 
 
+def set_scene_job(job_id: str, values: dict) -> None:
+    with SCENE_JOBS_LOCK:
+        SCENE_JOBS[job_id] = values
+
+
+def update_scene_job(job_id: str, **values) -> None:
+    with SCENE_JOBS_LOCK:
+        SCENE_JOBS[job_id].update(values)
+
+
+def get_scene_job(job_id: str) -> dict:
+    with SCENE_JOBS_LOCK:
+        if job_id not in SCENE_JOBS:
+            raise HTTPException(status_code=404, detail="Scene job not found")
+        return dict(SCENE_JOBS[job_id])
+
+
+def set_demo_job(job_id: str, values: dict) -> None:
+    with DEMO_JOBS_LOCK:
+        DEMO_JOBS[job_id] = values
+
+
+def update_demo_job(job_id: str, **values) -> None:
+    with DEMO_JOBS_LOCK:
+        DEMO_JOBS[job_id].update(values)
+
+
+def get_demo_job(job_id: str) -> dict:
+    with DEMO_JOBS_LOCK:
+        if job_id not in DEMO_JOBS:
+            raise HTTPException(status_code=404, detail="Demo job not found")
+        return dict(DEMO_JOBS[job_id])
+
+
 def ssm_status_response(job_id: str, job: dict) -> SSMStatusResponse:
     return SSMStatusResponse(job_id=job_id, status=job["status"], progress=job.get("progress", 0.0), message=job.get("message", ""), stage=job.get("stage"), embedding_path=job.get("embedding_path"), metadata_path=job.get("metadata_path"), checkpoint_path=job.get("checkpoint_path"), prediction_path=job.get("prediction_path"), prediction_shape=job.get("prediction_shape"), error=job.get("error"))
+
+
+def add_frame_urls(result: dict) -> dict:
+    frames = []
+    for path in result.get("frame_paths", []):
+        resolved = resolve_project_path(path)
+        try:
+            relative = resolved.relative_to(resolve_project_path(SCENE_CONFIG["frame_cache_dir"]))
+            frames.append(f"/frame_cache/{relative.as_posix()}")
+        except ValueError:
+            frames.append("")
+    return {**result, "frame_urls": frames}
 
 
 def list_relative_files(directory: Path, suffixes: set[str]) -> list[str]:
@@ -297,3 +512,4 @@ def list_relative_files(directory: Path, suffixes: set[str]) -> list[str]:
 
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+app.mount("/frame_cache", StaticFiles(directory=resolve_project_path(SCENE_CONFIG["frame_cache_dir"])), name="frame_cache")

@@ -3,6 +3,7 @@
 Research prototype for V-JEPA latent video dynamics.
 
 Phase 1 extracts frozen V-JEPA video embeddings from local videos. Phase 2 trains a latent sequence model over those saved embeddings to forecast future V-JEPA latent states.
+Phase 3 adds text-to-scene search over already processed videos using clip captions and text embeddings.
 
 ## Setup
 
@@ -37,23 +38,33 @@ python scripts/extract_vjepa_embeddings.py --video path/to/video.mp4 --config co
 ## Run Web Demo
 
 ```bash
-uvicorn api.main:app --reload
+PYTHONPATH=src python -m uvicorn api.main:app --host 127.0.0.1 --port 8002
 ```
 
 Then open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8002
 ```
 
-The page lets you upload a video or select one from `data/sample_videos`, start extraction, poll status, and inspect metadata plus saved output paths.
+Start Ollama before using the scene-search demo:
 
-The UI has two tabs:
+```bash
+ollama serve
+```
 
-- `Pipeline`: choose existing latents, upload a video, or select a sample video, then run extraction, SSM training, and future-latent prediction from one button.
-- `Benchmark`: choose an embedding file and run a small latent benchmark that reports loading time, model build time, train-step time, inference time, model type, device, and sequence shape.
+Confirm the local models:
 
-If an existing embedding is selected in the Pipeline tab, V-JEPA extraction is skipped.
+```bash
+ollama list
+```
+
+Expected local models:
+
+- `llama3.2-vision:11b`
+- `llama3.1:8b`
+
+The simplified page lets you upload a video, type a natural-language scene query, click `Search Video`, and view the best matching scenes. The backend automatically extracts V-JEPA features, samples frames, captions clips with local Ollama, builds the scene index, searches captions, and returns matching timestamps.
 
 ## Phase 2: Train Latent Dynamics
 
@@ -100,6 +111,66 @@ Training saves:
 
 Prediction saves a `.pt` file with predicted future latents, source context, checkpoint path, source embedding path, and prediction shape.
 
+## Phase 3: Text-To-Scene Search
+
+Phase 3 does not compare text directly with V-JEPA embeddings. V-JEPA latents are not text-aligned by default. Instead, the scene-search pipeline builds a caption index:
+
+```text
+uploaded video
+-> create dense full-video segments
+-> sample representative frames from each segment
+-> caption frames with Ollama vision model or placeholder backend
+-> embed captions with a text embedding model
+-> search captions with a text query
+-> return matching clips and timestamps
+```
+
+Ollama is used as the local LLM/VLM backend:
+
+```text
+http://127.0.0.1:11434
+```
+
+List available Ollama models:
+
+```bash
+python scripts/list_ollama_models.py
+```
+
+Build a scene index:
+
+```bash
+python scripts/build_scene_index.py --config configs/scene_search.yaml --embedding outputs/embeddings/example.pt
+```
+
+Search indexed scenes:
+
+```bash
+python scripts/search_scene.py --config configs/scene_search.yaml --query "find the scene where someone enters the room" --top-k 5
+```
+
+Default scene segmentation:
+
+- `segment_source`: `dense_video`
+- `segment_length_seconds`: `8.0`
+- `segment_stride_seconds`: `8.0`
+- `min_segment_seconds`: `2.0`
+- `frames_per_segment`: `1`
+
+For a 1731-second video, this creates about 217 searchable segments and indexes the full video instead of only the V-JEPA sampled clip times.
+
+Scene index outputs:
+
+- `outputs/scene_index/*.jsonl`
+- `outputs/scene_index/*.npy`
+- `outputs/frame_cache/**/*.jpg`
+
+Each scene row contains video path, embedding path, metadata path, segment index, start/end time, caption, sampled frame paths, caption backend, Ollama model, creation time, and segment source.
+
+Repeated uploads of the same video reuse the same content-hash upload path. Existing V-JEPA artifacts and valid dense scene indexes are reused when their settings match.
+
+If no vision-capable Ollama model is available, indexing falls back to placeholder captions based on metadata so search infrastructure can still run.
+
 ## API
 
 ```text
@@ -109,6 +180,11 @@ GET /metadata/{job_id}
 GET /videos
 GET /embeddings
 GET /checkpoints
+GET /ollama/status
+GET /ollama/models
+POST /demo/search-video
+GET /demo/status/{job_id}
+GET /demo/results/{job_id}
 POST /pipeline/run
 GET /pipeline/status/{job_id}
 GET /pipeline/results/{job_id}
@@ -119,6 +195,11 @@ GET /ssm/metrics/{job_id}
 POST /benchmark/run
 GET /benchmark/status/{job_id}
 GET /benchmark/results/{job_id}
+POST /scene/index
+GET /scene/index/status/{job_id}
+POST /scene/search
+GET /scene/search/results/{job_id}
+GET /scene/indexes
 ```
 
 `POST /extract` accepts multipart form data with either:
@@ -158,6 +239,25 @@ Key settings:
 - `normalize`: dataset-level latent normalization
 - `mse_weight` and `cosine_weight`: combined forecasting loss weights
 
+The scene-search config lives at `configs/scene_search.yaml`.
+
+Key settings:
+
+- `scene_index_dir`: scene JSONL and caption embedding output directory
+- `frame_cache_dir`: sampled frame output directory
+- `caption_backend`: `ollama_vision` or `placeholder`
+- `ollama_base_url`: local Ollama server URL
+- `ollama_model`: default local vision model, `llama3.2-vision:11b`
+- `ollama_text_model`: default local text reranking model, `llama3.1:8b`
+- `text_embedding_model`: sentence-transformers model for captions
+- `segment_source`: `dense_video` by default, or `vjepa_clip_times` for legacy indexing
+- `segment_length_seconds`: dense segment duration
+- `segment_stride_seconds`: dense segment stride
+- `min_segment_seconds`: minimum final partial segment duration
+- `frames_per_segment`: representative frames per dense segment
+- `top_k`: default search result count
+- `enable_llm_reranking`: optional Ollama reranking after vector retrieval
+
 ## Saved Artifact
 
 For `.pt` output, the saved file contains:
@@ -172,7 +272,7 @@ The temporal axis is axis `0`, one entry per sampled clip. This is the intended 
 
 Metadata JSON is also saved under `outputs/metadata`.
 
-Dangerous-event anticipation is planned for Phase 3. A future risk head can be added on top of the temporal model state, but Phase 2 stays focused on self-supervised future latent prediction.
+Dangerous-event anticipation is planned for a later phase. A future risk head can be added on top of the temporal model state, but Phase 2 stays focused on self-supervised future latent prediction and Phase 3 stays focused on text-to-scene retrieval.
 
 ## References
 

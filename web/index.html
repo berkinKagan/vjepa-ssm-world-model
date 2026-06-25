@@ -3,109 +3,54 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>V-JEPA Latent Dynamics</title>
+    <title>V-JEPA Scene Search</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
     <main class="shell">
-      <section class="workspace">
-        <div class="header">
-          <div>
-            <p class="eyebrow">Research Prototype</p>
-            <h1>V-JEPA Latent Dynamics</h1>
-          </div>
-          <div class="badge" id="statusBadge">idle</div>
+      <header class="header">
+        <div>
+          <h1>V-JEPA Scene Search</h1>
+          <p>Upload a video and search for a scene using natural language.</p>
         </div>
-        <nav class="tabs">
-          <button class="tab active" id="pipelineTab" type="button">Pipeline</button>
-          <button class="tab" id="benchmarkTab" type="button">Benchmark</button>
-        </nav>
-        <section class="view" id="pipelineView">
-          <div class="grid">
-            <section class="panel">
-              <h2>Input</h2>
-              <label class="field">
-                <span>Existing latents</span>
-                <select id="pipelineEmbeddingSelect">
-                  <option value="">Loading embeddings...</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Upload video</span>
-                <input id="fileInput" type="file" accept="video/*">
-              </label>
-              <label class="field">
-                <span>Sample video</span>
-                <select id="videoSelect">
-                  <option value="">Loading videos...</option>
-                </select>
-              </label>
-              <button id="runPipelineButton" type="button">Run full pipeline</button>
-            </section>
-            <section class="panel">
-              <h2>Status</h2>
-              <div class="progress">
-                <div id="pipelineProgressBar"></div>
-              </div>
-              <p id="pipelineStatusText">Waiting for input.</p>
-              <dl class="paths">
-                <dt>Embedding</dt>
-                <dd id="embeddingPath">-</dd>
-                <dt>Checkpoint</dt>
-                <dd id="checkpointPath">-</dd>
-                <dt>Prediction</dt>
-                <dd id="predictionPath">-</dd>
-                <dt>Shape</dt>
-                <dd id="predictionShape">-</dd>
-              </dl>
-            </section>
+      </header>
+      <section class="searchPanel">
+        <label class="field">
+          <span>Video</span>
+          <input id="videoInput" type="file" accept="video/*">
+        </label>
+        <label class="field">
+          <span>Scene query</span>
+          <input id="queryInput" type="text" placeholder="find the scene where someone enters the room">
+        </label>
+        <button id="searchButton" type="button">Search Video</button>
+      </section>
+      <section class="statusPanel" aria-live="polite">
+        <div class="progress">
+          <div id="progressBar"></div>
+        </div>
+        <p id="statusText">Waiting for a video and query.</p>
+        <dl class="summary" id="summary" hidden>
+          <div>
+            <dt>Duration</dt>
+            <dd id="durationText">-</dd>
           </div>
-          <section class="metadata">
-            <div class="metadataHeader">
-              <h2>Pipeline Results</h2>
-              <div id="pipelineModelText">model: -</div>
-            </div>
-            <pre id="pipelineOutput">{}</pre>
-          </section>
-        </section>
-        <section class="view" id="benchmarkView" hidden>
-          <div class="grid">
-            <section class="panel">
-              <h2>Benchmark</h2>
-              <label class="field">
-                <span>Embedding</span>
-                <select id="benchmarkEmbeddingSelect">
-                  <option value="">Loading embeddings...</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Steps</span>
-                <input id="benchmarkStepsInput" type="number" min="1" max="100" value="5">
-              </label>
-              <button id="runBenchmarkButton" type="button">Run benchmark</button>
-            </section>
-            <section class="panel">
-              <h2>Status</h2>
-              <div class="progress">
-                <div id="benchmarkProgressBar"></div>
-              </div>
-              <p id="benchmarkStatusText">Waiting for embeddings.</p>
-              <dl class="paths">
-                <dt>Embedding</dt>
-                <dd id="benchmarkEmbeddingPath">-</dd>
-                <dt>Output</dt>
-                <dd id="benchmarkOutputPath">-</dd>
-              </dl>
-            </section>
+          <div>
+            <dt>Segments</dt>
+            <dd id="segmentsText">-</dd>
           </div>
-          <section class="metadata">
-            <div class="metadataHeader">
-              <h2>Benchmark Results</h2>
-              <div id="benchmarkModelText">model: -</div>
-            </div>
-            <pre id="benchmarkOutput">{}</pre>
-          </section>
-        </section>
+          <div>
+            <dt>Coverage</dt>
+            <dd id="coverageText">-</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="resultsSection">
+        <div class="resultsHeader">
+          <h2>Matching Scenes</h2>
+          <span id="resultCount">0 results</span>
+        </div>
+        <div class="results" id="results"></div>
       </section>
     </main>
     <script src="/static/app.js"></script>

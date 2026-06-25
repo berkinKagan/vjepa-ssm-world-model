@@ -12,8 +12,12 @@ outputs/metadata/*
 outputs/checkpoints/*
 outputs/predictions/*
 outputs/benchmarks/*
+outputs/frame_cache/*
+outputs/scene_index/*
 !outputs/embeddings/.gitkeep
 !outputs/metadata/.gitkeep
 !outputs/checkpoints/.gitkeep
 !outputs/predictions/.gitkeep
 !outputs/benchmarks/.gitkeep
+!outputs/frame_cache/.gitkeep
+!outputs/scene_index/.gitkeep
